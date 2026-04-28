@@ -6,8 +6,7 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { v4 as uuidv4 } from 'uuid';
-import { ThoughtNode, Edge, Space, NodeType, NODE_VISUAL_MAP, OnboardingAnswer } from '@/types';
+import { NODE_VISUAL_MAP, NodeType } from '@/types';
 import { useSpaceStore } from '@/stores/spaceStore';
 import { useUserStore } from '@/stores/userStore';
 import { useRouter } from 'next/navigation';
@@ -72,67 +71,6 @@ const questions: Question[] = [
   },
 ];
 
-function generateNodesFromAnswers(answers: OnboardingAnswer[], userId: string): ThoughtNode[] {
-  const nodes: ThoughtNode[] = [];
-  const angleStep = (Math.PI * 2) / answers.length;
-
-  answers.forEach((answer, i) => {
-    const visual = NODE_VISUAL_MAP[answer.category];
-    const radius = 2.5 + Math.random() * 1.5;
-    const angle = angleStep * i;
-    const height = (Math.random() - 0.5) * 3;
-
-    nodes.push({
-      id: uuidv4(),
-      userId,
-      type: answer.category,
-      label: answer.answer.split(' ').slice(0, 4).join(' ') + (answer.answer.split(' ').length > 4 ? '...' : ''),
-      content: answer.answer,
-      position: {
-        x: Math.cos(angle) * radius,
-        y: 1 + height,
-        z: Math.sin(angle) * radius,
-      },
-      size: 0.8 + Math.random() * 0.4,
-      color: visual.defaultColor,
-      importance: 0.5 + Math.random() * 0.5,
-      createdAt: new Date().toISOString(),
-    });
-  });
-
-  return nodes;
-}
-
-function generateEdges(nodes: ThoughtNode[]): Edge[] {
-  const edges: Edge[] = [];
-
-  // Connect nodes of similar types
-  for (let i = 0; i < nodes.length; i++) {
-    for (let j = i + 1; j < nodes.length; j++) {
-      if (nodes[i].type === nodes[j].type) {
-        edges.push({
-          id: uuidv4(),
-          fromNode: nodes[i].id,
-          toNode: nodes[j].id,
-          type: 'strong',
-          weight: 0.7 + Math.random() * 0.3,
-          createdAt: new Date().toISOString(),
-        });
-      } else if (Math.random() > 0.6) {
-        edges.push({
-          id: uuidv4(),
-          fromNode: nodes[i].id,
-          toNode: nodes[j].id,
-          type: 'related',
-          weight: 0.3 + Math.random() * 0.4,
-          createdAt: new Date().toISOString(),
-        });
-      }
-    }
-  }
-
-  return edges;
-}
 
 export default function OnboardingFlow() {
   const [step, setStep] = useState(0); // 0 = name, 1+ = questions
@@ -176,20 +114,7 @@ export default function OnboardingFlow() {
   const handleGenerate = async () => {
     setIsGenerating(true);
 
-    const userId = uuidv4();
-
-    // Create user
-    const user = {
-      id: userId,
-      name: name.trim(),
-      email: '',
-      metadata: {},
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    // Build answers array
-    const allAnswers: OnboardingAnswer[] = questions
+    const allAnswers = questions
       .filter((q) => answers[q.id] || (q.id === currentQuestion?.id && currentAnswer))
       .map((q) => ({
         question: q.text,
@@ -197,38 +122,39 @@ export default function OnboardingFlow() {
         category: q.category,
       }));
 
-    // Generate nodes + edges
-    const nodes = generateNodesFromAnswers(allAnswers, userId);
-    const edges = generateEdges(nodes);
+    try {
+      const res = await fetch('/api/onboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim(),
+          answers: allAnswers,
+        }),
+      });
 
-    const space: Space = {
-      id: uuidv4(),
-      userId,
-      layoutType: 'constellation',
-      theme: {
-        primaryColor: '#6366f1',
-        secondaryColor: '#ec4899',
-        backgroundColor: '#050510',
-        ambientIntensity: 0.4,
-        particleDensity: 200,
-        bloomIntensity: 1.2,
-      },
-      cameraDefaults: {
-        position: [8, 5, 8],
-        target: [0, 1, 0],
-        fov: 55,
-      },
-      lastUpdated: new Date().toISOString(),
-    };
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to generate space');
+      }
+      
+      const data = await res.json();
+      
+      // Fetch the newly created space to populate Zustand store
+      const spaceRes = await fetch(`/api/spaces/${data.userId}`);
+      if (!spaceRes.ok) throw new Error('Failed to fetch space');
+      
+      const spaceData = await spaceRes.json();
+      
+      setCurrentUser(spaceData.user);
+      setOnboarded(true);
+      setSpace(spaceData.space, spaceData.nodes, spaceData.edges);
 
-    // Simulate a brief processing delay
-    await new Promise((r) => setTimeout(r, 1500));
-
-    setCurrentUser(user);
-    setOnboarded(true);
-    setSpace(space, nodes, edges);
-
-    router.push('/space/me');
+      router.push('/space/me');
+    } catch (error: any) {
+      console.error(error);
+      setIsGenerating(false);
+      alert('Error: ' + error.message);
+    }
   };
 
   const handleSkip = () => {

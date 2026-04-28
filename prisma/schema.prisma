@@ -1,0 +1,100 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  avatarUrl String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  nodes        ThoughtNode[]
+  space        Space?
+  matchesA     Match[]       @relation("MatchUserA")
+  matchesB     Match[]       @relation("MatchUserB")
+  interactions Interaction[] @relation("UserInteractions")
+}
+
+model ThoughtNode {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       String   // "interest", "belief", "goal", "memory", "value"
+  label      String
+  content    String
+  mediaUrl   String?
+  // Embedding vector (e.g. 1536 dim for OpenAI)
+  embedding  Float[]
+  
+  posX       Float
+  posY       Float
+  posZ       Float
+  size       Float
+  color      String
+  importance Float    // 0-1 weight
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  edgesFrom    Edge[]        @relation("EdgeFrom")
+  edgesTo      Edge[]        @relation("EdgeTo")
+  interactions Interaction[] @relation("NodeInteractions")
+}
+
+model Edge {
+  id        String   @id @default(uuid())
+  fromNode  String
+  toNode    String
+  type      String   // "related", "causal", "contrast", "strong", "weak"
+  weight    Float    // 0-1
+  createdAt DateTime @default(now())
+
+  from ThoughtNode @relation("EdgeFrom", fields: [fromNode], references: [id], onDelete: Cascade)
+  to   ThoughtNode @relation("EdgeTo", fields: [toNode], references: [id], onDelete: Cascade)
+
+  @@unique([fromNode, toNode])
+}
+
+model Space {
+  id             String   @id @default(uuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  layoutType     String   // "cluster", "radial", "free", "constellation"
+  theme          Json     // colors, lighting, particles
+  cameraDefaults Json     // position, target, fov
+  lastUpdated    DateTime @default(now()) @updatedAt
+}
+
+model Match {
+  id                 String   @id @default(uuid())
+  userAId            String
+  userBId            String
+  similarityScore    Float    // 0-1
+  alignmentClusters  Json     // shared themes
+  conflictZones      Json     // opposing nodes
+  graphOverlap       Json     // structural similarity
+  computedAt         DateTime @default(now())
+
+  userA User @relation("MatchUserA", fields: [userAId], references: [id], onDelete: Cascade)
+  userB User @relation("MatchUserB", fields: [userBId], references: [id], onDelete: Cascade)
+
+  @@unique([userAId, userBId])
+}
+
+model Interaction {
+  id        String   @id @default(uuid())
+  fromUser  String
+  toNode    String
+  type      String   // "view", "connect", "react", "bookmark"
+  data      Json?
+  createdAt DateTime @default(now())
+
+  user User        @relation("UserInteractions", fields: [fromUser], references: [id], onDelete: Cascade)
+  node ThoughtNode @relation("NodeInteractions", fields: [toNode], references: [id], onDelete: Cascade)
+}
